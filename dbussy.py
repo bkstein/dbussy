@@ -701,7 +701,7 @@ class BasicType(Type) :
                 raise TypeError("expecting a string, not %s: %s" % (type(val).__name__, repr(val)))
             #end if
         else :
-            raise RuntimError("unknown basic type %s" % repr(self.code))
+            raise RuntimeError("unknown basic type %s" % repr(self.code))
         #end if
         return \
             val
@@ -891,7 +891,7 @@ def data_key(data) :
 #end data_key
 
 #+
-# Library prototypes
+#begin Library prototypes
 #-
 
 # from dbus-connection.h:
@@ -1389,6 +1389,8 @@ dbus.dbus_server_set_data.restype = DBUS.bool_t
 dbus.dbus_server_set_data.argtypes = (ct.c_void_p, ct.c_int, ct.c_void_p, ct.c_void_p)
 dbus.dbus_server_set_data.restype = ct.c_void_p
 dbus.dbus_server_set_data.argtypes = (ct.c_void_p, ct.c_int)
+
+#end Library prototypes
 
 # TODO dbus-threads.h <https://dbus.freedesktop.org/doc/api/html/group__DBusThreads.html>
 # Seems like the only call worth making is dbus_threads_init_default.
@@ -3985,7 +3987,9 @@ class Message :
 
     @classmethod
     def new_method_call(celf, destination, path, iface, method) :
-        "creates a new DBUS.MESSAGE_TYPE_METHOD_CALL message."
+        """
+        creates a new DBUS.MESSAGE_TYPE_METHOD_CALL message.
+        """
         result = dbus.dbus_message_new_method_call \
           (
             (lambda : None, lambda : destination.encode())[destination != None](),
@@ -4165,6 +4169,8 @@ class Message :
                         key, value = tuple(x.object for x in entry.recurse())
                         result[key] = value
                     #end while
+                elif dbus.dbus_type_is_fixed(self.element_type):
+                    result = self.fixed_array
                 else :
                     result = list(x.object for x in self.recurse())
                     if len(result) != 0 and result[-1] == None :
@@ -4205,17 +4211,17 @@ class Message :
             "returns the array elements, assuming the current argument is an array" \
             " with a non-container element type."
             c_element_type = DBUS.basic_to_ctypes[self.element_type]
+            if not dbus.dbus_type_is_fixed(self.element_type):
+                raise RuntimeError(f"invalid array element type {self.element_type}")
             c_result = ct.POINTER(c_element_type)()
             c_nr_elts = ct.c_int()
-            dbus.dbus_message_iter_get_fixed_array(self._dbobj, ct.byref(c_result), ct.byref(c_nr_elts))
+            array_iter = self.recurse()
+            dbus.dbus_message_iter_get_fixed_array(array_iter._dbobj, ct.byref(c_result), ct.byref(c_nr_elts))
             result = []
             for i in range(c_nr_elts.value) :
                 elt = c_result[i]
                 if c_element_type == ct.c_char_p :
-                    elt = elt.value.decode()
-                else :
-                    elt = elt.value
-                #end if
+                    elt = elt.decode()
                 result.append(elt)
             #end for
             return \
@@ -4260,19 +4266,29 @@ class Message :
         #end append_basic
 
         def append_fixed_array(self, element_type, values) :
-            "appends an array of elements of a non-container type."
-            c_elt_type = DBUS.basic_to_ctypes[element_type]
+            """
+            Appends an array of elements of a non-container type.
+
+            :param dbussy.Type element_type: Type of array elements.
+            :param list values: list of values of type element_type.
+            """
+            if not isinstance(element_type, BasicType):
+                raise RuntimeError(
+                    f"Invalid element type {repr(element_type)}")
+            elttype_code = element_type.code.value
+            c_elt_type = DBUS.basic_to_ctypes[elttype_code]
             nr_elts = len(values)
             c_arr = (nr_elts * c_elt_type)()
-            for i in range(nr_elts) :
-                if c_elt_type == ct.c_char_p :
+            if c_elt_type == ct.c_char_p :
+                for i in range(nr_elts) :
                     c_arr[i] = values[i].encode()
-                else :
+            else :
+                for i in range(nr_elts) :
                     c_arr[i] = values[i]
                 #end if
             #end for
             c_arr_ptr = ct.pointer(c_arr)
-            if not dbus.dbus_message_iter_append_fixed_array(self._dbobj, element_type, ct.byref(c_arr_ptr), nr_elts) :
+            if not dbus.dbus_message_iter_append_fixed_array(self._dbobj, elttype_code, ct.byref(c_arr_ptr), nr_elts) :
                 raise CallFailed("dbus_message_iter_append_fixed_array")
             #end if
             return \
@@ -4408,13 +4424,17 @@ class Message :
                     subiter.close()
                 elif isinstance(elttype, ArrayType) :
                     # append 0 or more elements matching elttype.elttype
-                    subiter = appenditer.open_container(DBUS.TYPE_ARRAY, elttype.elttype.signature)
-                    if not isinstance(elt, (tuple, list)) :
-                        raise TypeError("expecting sequence of values for array")
-                    #end if
-                    for subval in elt :
-                        append_sub([elttype.elttype], [subval], subiter)
-                    #end for
+                    subelttype = elttype.elttype
+                    subiter = appenditer.open_container(DBUS.TYPE_ARRAY, subelttype.signature)
+                    if isinstance(subelttype, BasicType):
+                        subiter.append_fixed_array(subelttype, elt)
+                    else:
+                        if not isinstance(elt, (tuple, list)) :
+                            raise TypeError("expecting sequence of values for array")
+                        #end if
+                        for subval in elt :
+                            append_sub([elttype.elttype], [subval], subiter)
+                        #end for
                     subiter.close()
                 elif isinstance(elttype, StructType) :
                     if not isinstance(elt, (tuple, list)) :

@@ -16,6 +16,7 @@ from weakref import \
     WeakValueDictionary
 import asyncio
 import atexit
+
 import dbussy as dbus
 from dbussy import \
     DBUS, \
@@ -1110,7 +1111,7 @@ class Connection(dbus.TaskKeeper) :
     #begin object_added
         path = dbus.unsplit_path(path)
         if self._managed_objects == None :
-            raise RuntimError("ObjectManager interface needs to be registered on this Connection")
+            raise RuntimeError("ObjectManager interface needs to be registered on this Connection")
         #end if
         if interfaces_and_props == None :
             # get all applicable interface names, props will be retrieved below
@@ -1368,14 +1369,14 @@ class Connection(dbus.TaskKeeper) :
         reply = self.send_with_reply_and_block(message, timeout)
         if reply != None :
             proptype, propvalue = reply.expect_return_objects("v")[0]
-            expect_type = dbus.unparse_signature(property["type"])
+            expect_type = dbus.unparse_signature(propentry["type"])
             if proptype != expect_type :
                 raise TypeError \
                   (
                     "wrong property type, expected “%s”, got “%s”" % (expect_type, proptype)
                   )
             #end if
-            result = property["type"].validate(propvalue)
+            result = propentry["type"].validate(propvalue)
         else :
             raise dbus.DBusError(DBUS.ERROR_TIMEOUT, "server took too long to return property value")
         #end if
@@ -1400,7 +1401,7 @@ class Connection(dbus.TaskKeeper) :
         reply = await self.connection.send_await_reply(message, timeout)
         if reply != None :
             proptype, propvalue = reply.expect_return_objects("v")[0]
-            expect_type = dbus.unparse_signature(property["type"])
+            expect_type = dbus.unparse_signature(propentry["type"])
             if proptype != expect_type :
                 raise TypeError \
                   (
@@ -3434,7 +3435,7 @@ def def_proxy_interface(kind, *, name, introspected, is_async) :
     proxy.__doc__ = "for making method calls on the %s interface." % introspected.name
     if kind != INTERFACE.SERVER :
         for method in introspected.methods :
-            def_method(method)
+                def_method(method)
         #end for
         for prop in introspected.properties :
             def_prop(prop)
